@@ -450,6 +450,19 @@ pnpm dev       # every service with hot reload
   `pnpm dev|build|lint|typecheck|test` therefore run `scripts/run-all.sh`, which calls each
   repo's own script in dependency order (kernel → modules → services → shell → docs). It reports
   every failure rather than stopping at the first, and `--parallel` is what `pnpm dev` uses.
+- **Every aggregate command is only as complete as `scripts/repos.mjs`, and it was missing `shell`.**
+  `dev-setup.sh` cloned `app` — this repository, into itself — and never cloned `shell`;
+  `run-all.sh` left `shell` out of its build order. So `pnpm setup` produced a workspace with no
+  user interface, `pnpm dev` started every backend and no front end, and `pnpm build`, `lint`,
+  `test` and `typecheck` skipped the entire UI repository while reporting success. That is how
+  shell defects cleared this quality bar for months, and it was invisible on the one machine whose
+  `repos/` had been assembled by hand. The list is one file now, read by `dev-setup.sh`,
+  `run-all.sh` and `check-messages.mjs` — but one list only stops the copies drifting from each
+  other, and the list itself going stale is the failure that actually shipped. `pnpm check:repos`
+  is what asks the organisation whether the set is complete: every repository must be in `ORDER`
+  or in `OUTSIDE` with the reason, so a new one is a decision somebody records rather than an
+  omission nobody sees. A hardcoded list in a `package.json` script is the same defect — that is
+  where the eight module directories `check:messages` covered used to live.
 - **`pnpm status` is the only honest answer to "is everything committed?"** Ten repositories means ten
   answers, and `website` is checked out *beside* the umbrella rather than inside `repos/`, so a loop
   over `repos/*` misses it — silently, which is the worst way to miss something. The script finds
@@ -634,13 +647,20 @@ pnpm dev       # every service with hot reload
   shipped 0.20.3). Guard on the event instead: `github.event_name == 'schedule' || inputs.x ==
   true`. And when a step's absence is invisible in a green run, read the run's *step conclusions*
   (`gh run view --json jobs`) rather than its conclusion — that is where "skipped" shows.
-- **A release is a claim that core and shell agree, and only the reach used to make it true.**
+- **A release is a claim that every image agrees, and only the reach used to make it true.**
   A reach that fails releases main as it is, and main is edited by hand — shell reached
   `module-hr` 0.22.0 on 2026-09-03 while core sat on 0.20.3, and the next release would have
   shipped a client calling procedures the server did not have, every one a 404. `release.yml`
-  now reads both lockfiles and refuses to tag when any `@kernhq/module-*` or `@kernhq/contracts`
-  resolves differently in the two; the fix is always to move the one that is behind, never to
-  release the pair.
+  reads the lockfiles and refuses to tag when any `@kernhq/module-*` or `@kernhq/contracts`
+  resolves differently across them; the fix is always to move the one that is behind, never to
+  release the set.
+  **It read `core` and `shell` alone until 2026-09-05, and core is not the only host.** `chat`
+  carries module-chat's server and `mail` carries module-mail's, both clients living in shell — so
+  the two modules whose server and client sit in *different* repositories were exactly the two the
+  guard could not see. It reads all five services now. The first run found `module-mail` at 0.6.1
+  in shell against 0.5.2 in mail on `main`, which had been invisible for as long as the check
+  existed. When you write a guard over a set, enumerate the set from the same place the workflow
+  does (`SERVICES`), never from the two examples that prompted it.
 - **Renovate is installed and has never opened a pull request here.** ADR 0009 leaned on its
   `@kernhq/*` automerge for months; zero PRs and zero dependency dashboards in any repository. Do
   not lean on it for anything a release depends on; the reach is what moves module pins.
@@ -657,6 +677,27 @@ pnpm dev       # every service with hot reload
   an exported type changed shape is invisible in a subject line, and publishing that as a patch is
   what a consumer's caret range installs silently — so a `!` or a `BREAKING CHANGE` trailer with no
   changeset fails, in CI and at publish.
+- **The cloud rollout is the one workflow that holds a credential for a machine, and it used to
+  post it in the clear.** `COOLIFY_URL` is `http://128.140.5.236:8000`, so every nightly rollout
+  sent `COOLIFY_TOKEN` — a full Coolify API token, not deploy-only — as a bearer header across the
+  public internet, twice per run. There is no HTTPS to switch to and checking that first is the
+  point: :8000 speaks no TLS at all, the instance has no FQDN, and Traefik holds certificates for
+  kernaio.com, www, docs, app and files only, so pointing the workflow at `https://` would have
+  broken every release rather than secured one. The fix needed nothing from the owner, because the
+  rollout is **already** connected to that exact host by SSH — it dry-runs migrations and dumps the
+  database there — so `.github/scripts/coolify-endpoint.sh` forwards a port down that connection
+  and the API call becomes a local one. Over `https://` it changes nothing; it **refuses** rather
+  than falling back to cleartext, because a fallback nobody sees is how the credential returns to
+  the wire. Before reaching for DNS and a certificate, check whether you already hold an encrypted
+  channel to the same machine. Still open, and owner-side: ufw allows only 22/tcp but Docker
+  publishes :8000 straight through iptables, so the Coolify API is on the internet regardless of
+  this workflow.
+- **`curl ... || echo 000` cannot be compared with `"000"`.** A curl that cannot connect prints
+  `000` on stdout *and* exits non-zero, so the `||` appends a second one: the variable holds
+  `000000`, `[ "$code" = "000" ]` is false, and the health check you just wrote reports success for
+  a dead endpoint. It was written that way twice in one file on 2026-09-05 and caught only by
+  pointing the tunnel at a port with nothing behind it. Match the shape instead —
+  `case "$code" in [1-5][0-9][0-9])` — and test a probe against something that is genuinely down.
 - **Green is not shipped.** A push builds an image; it does not move the cloud. `app.kernaio.com`
   has auto-deploy off on purpose — main moves all day and the cloud moves once, on a release. The
   honest check for "is my change live" is `/api/health` reporting the version, not `git log`.
