@@ -125,8 +125,9 @@ pnpm setup
 
 `pnpm setup` clones every Kern repository into `repos/` and installs all dependencies at once.
 
-**Expected result:** `repos/` contains `shell`, `core`, `chat`, `mail`, `collab`, `kernel`, `modules`
-and `docs`.
+**Expected result:** `repos/` contains fifteen directories — `kernel`, the eight `module-*`
+repositories, `core`, `chat`, `mail`, `collab`, `shell` and `docs`. Run `node scripts/repos.mjs` to
+print the same list.
 
 ### 2. Start the infrastructure
 
@@ -191,7 +192,8 @@ you can build a module, you can build a feature that sits beside ours as an equa
 | [`mail`](https://github.com/KernAIO/mail) | Email leaving Kern, and replies coming back |
 | [`collab`](https://github.com/KernAIO/collab) | Documents several people edit at the same time |
 | [`kernel`](https://github.com/KernAIO/kernel) | The libraries every service and module is built on |
-| [`modules`](https://github.com/KernAIO/modules) | The features Kern ships with |
+| [`module-template`](https://github.com/KernAIO/module-template) | Apache-2.0 starting point for a module: a whole working one — contract, server, schema, screens and strings |
+| [`module-tracker`](https://github.com/KernAIO/module-tracker), [`-chat`](https://github.com/KernAIO/module-chat), [`-quire`](https://github.com/KernAIO/module-quire), [`-hr`](https://github.com/KernAIO/module-hr), [`-mail`](https://github.com/KernAIO/module-mail), [`-billing`](https://github.com/KernAIO/module-billing), [`-inventory`](https://github.com/KernAIO/module-inventory) | The features Kern ships with — one repository each, built the way yours would be |
 | [`docs`](https://github.com/KernAIO/docs) | The documentation site |
 | [`brand`](https://github.com/KernAIO/brand) | The logo, and the rules for using it |
 
