@@ -364,35 +364,61 @@ jobs:
             exit 1
           fi
 
-      - name: Refuse to release a core and a shell that disagree about a module
+      - name: Refuse to release services that disagree about a module
         if: steps.changed.outputs.value == 'true'
         env:
           GH_TOKEN: ${{ secrets.KERN_RELEASE_TOKEN }}
         run: |
           set -euo pipefail
-          # A module's server runs in `core` and its client in `shell`, so one release with two
-          # versions of one module is a contract mismatch: the client calls procedures the server
-          # has never heard of and every one of them 404s. The reach keeps the two in step when it
-          # lands, but a reach that fails releases main as it is, and main is edited by hand —
-          # shell reached module-hr 0.22.0 on 2026-09-03 while core sat on 0.20.3. Read what each
-          # lockfile actually resolves, not the ranges, because a range says what may install and
-          # the lockfile says what the image will carry.
-          resolved() { # resolved <repo> -> "name version" per @kernhq package the lockfile pins
-            gh api -H 'Accept: application/vnd.github.raw' "/repos/KernAIO/$1/contents/pnpm-lock.yaml?ref=main" \
-              | grep -oE "^  '?@kernhq/(module-[a-z]+|contracts)@[0-9]+\.[0-9]+\.[0-9]+" \
+          # A module's server runs in a host service and its client in `shell`, so one release
+          # carrying two versions of one module is a contract mismatch: the client calls procedures
+          # the server has never heard of and every one of them 404s. The reach keeps them in step
+          # when it lands, but a reach that fails releases main as it is, and main is edited by
+          # hand — shell reached module-hr 0.22.0 on 2026-09-03 while core sat on 0.20.3.
+          #
+          # This read `core` and `shell` alone until 2026-09-05, and core is not the only host:
+          # `chat` carries module-chat's server and `mail` carries module-mail's, both clients
+          # living in shell — so the two modules whose server and client are in *different* repos
+          # were the two the guard could not see. It reads every service now, and `@kernhq/contracts`
+          # has to agree across all five.
+          #
+          # Read what each lockfile resolves, not the ranges: a range says what may install and the
+          # lockfile says what the image will actually carry.
+          resolved() { # resolved <repo> -> "package version" for every @kernhq package it pins
+            local lock
+            lock=$(gh api -H 'Accept: application/vnd.github.raw' "/repos/KernAIO/$1/contents/pnpm-lock.yaml?ref=main")
+            # No match is not a failure — collab hosts no module today. A lockfile that could not be
+            # fetched has already failed on the line above.
+            printf '%s\n' "$lock" \
+              | { grep -oE "^  '?@kernhq/(module-[a-z0-9-]+|contracts)@[0-9]+\.[0-9]+\.[0-9]+" || true; } \
               | sed -E "s/^  '?//; s/@([0-9])/ \1/" | sort -u
           }
-          resolved core > core.txt
-          resolved shell > shell.txt
-          MISMATCH=$(join core.txt shell.txt | awk '$2 != $3 { printf "%s: core %s, shell %s\n", $1, $2, $3 }')
-          if [ -n "$MISMATCH" ]; then
-            echo "::error::Not releasing — core and shell would ship different versions of the same contract:"
-            echo "$MISMATCH" | sed 's/^/::error::  /'
-            echo "::error::Run the reach (dispatch this workflow with reach on) or move the one that is behind; never release the pair as it is."
+          : > resolved.txt
+          for repo in $SERVICES; do
+            resolved "$repo" | sed "s|^|$repo |" >> resolved.txt
+          done
+
+          # A check that silently stops matching passes for ever and says nothing. If pnpm changes
+          # how it writes a key, every service reports no packages and every release agrees.
+          if [ ! -s resolved.txt ]; then
+            echo "::error::No @kernhq package was found in any service lockfile, so this check just compared nothing. Either the lockfiles moved or pnpm changed the shape it writes them in."
             exit 1
           fi
-          echo "core and shell agree on every module and on the contracts:"
-          join core.txt shell.txt | awk '{ printf "  %s %s\n", $1, $2 }'
+
+          # Any package pinned to more than one version across the release — including twice within
+          # one lockfile, which is a second copy of it inside one image.
+          SPLIT=$(awk '{ print $2, $3 }' resolved.txt | sort -u \
+                  | awk '{ n[$1]++ } END { for (p in n) if (n[p] > 1) print p }' | sort)
+          if [ -n "$SPLIT" ]; then
+            echo "::error::Not releasing — these images would ship different versions of the same contract:"
+            for pkg in $SPLIT; do
+              echo "::error::  $pkg — $(awk -v p="$pkg" '$2 == p { printf "%s %s, ", $1, $3 }' resolved.txt | sed 's/, $//')"
+            done
+            echo "::error::Run the reach (dispatch this workflow with reach on) or move whichever is behind; never release the set as it is."
+            exit 1
+          fi
+          echo "every service agrees on every module and on the contracts:"
+          awk '{ v[$2] = $3; where[$2] = where[$2] " " $1 } END { for (p in v) printf "  %-30s %-10s in%s\n", p, v[p], where[p] }' resolved.txt | sort
 
       - name: Tag every service repository
         if: steps.changed.outputs.value == 'true'
