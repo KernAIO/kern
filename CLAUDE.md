@@ -601,6 +601,23 @@ pnpm dev       # every service with hot reload
   told; and the `systemd/` units are not in the list. `KERN_RAW_BASE` points the fetch at a local
   directory laid out as `<ref>/selfhost/<file>`, which is how CI tests the whole thing with no Docker
   and no Kern (`--stack-files` is the refresh on its own).
+- **`install.sh`'s download list and `STACK_FILES` are two halves of one contract, and the gap
+  between them is invisible.** A file `install.sh` delivers and `kern-upgrade.sh` does not carry
+  forward reaches new installs only — the exact disease the bullet above treats, one level up, in
+  the list rather than the mechanism. `livekit.yaml` was in that gap: on 2026-09-05 an upgraded
+  instance took the new `docker-compose.yml`, which publishes 7882/udp, and kept the `livekit.yaml`
+  from install, which listens on 50000-50200. The upgrade printed its green tick, because a file
+  absent from a list is indistinguishable from a file that is already current. CI holds the two
+  lists to each other now: everything `install.sh` downloads is in `STACK_FILES` or in that step's
+  `EXCEPT` with the reason. When you add a file to the distribution, you are adding it to both.
+- **LiveKit refuses a config key it does not know, which is the good kind of failure.**
+  `field auto_kreate not found in type config.RoomConfig` and the server exits, so a typo in
+  `livekit.yaml` is a container that will not start rather than a setting silently ignored — worth
+  knowing, because it means a key that *does* parse is a key LiveKit really has. Media rides
+  `rtc.udp_port` (one multiplexed socket) with `rtc.tcp_port` as the fallback: two published ports.
+  The `port_range_start`/`port_range_end` pair it shipped with published **202** container ports,
+  measured with `docker inspect .NetworkSettings.Ports`, and `room.auto_create: false` is what stops
+  a leaked join token conjuring a room Kern has no record of.
 - **A blank `.env` value is not an absent one, and only one of them can be repaired by adding.**
   The backfills in `install.sh` and `kern-upgrade.sh` handle a key that is *missing* by generating
   it. The opposite case needs the opposite fix: `KERN_SIGNUP=` defeats the compose pass-through and

@@ -127,6 +127,59 @@ jobs:
           # SC2086 (word splitting) is deliberate for the compose profile list
           shellcheck --severity=warning --exclude=SC2086 install.sh kern-upgrade.sh kern-rollback.sh kern-backup.sh
 
+      # The fixture below proves the *mechanism*. This step proves the **list**, which is the half
+      # that actually went wrong: `livekit.yaml` was downloaded by install.sh and absent from
+      # kern-upgrade.sh's STACK_FILES, so an upgraded instance kept the 50000-50200 media config
+      # while the compose file it had just been handed published 7882. Nothing could see it — a file
+      # missing from a list looks exactly like a file that is already current, and the upgrade
+      # printed its green tick either way.
+      #
+      # So the two lists are held to each other: every file install.sh downloads is either brought
+      # forward by an upgrade, or named here with the reason it is not.
+      - name: Every file install.sh downloads is one an upgrade can bring forward
+        working-directory: selfhost
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re, sys
+
+          # kern-upgrade.sh cannot replace itself: bash reads a script incrementally, so rewriting
+          # this file underneath a running interpreter resumes at a byte offset in different text.
+          # It is offered as kern-upgrade.sh.new instead, which is a delivery, not an omission.
+          #
+          # The systemd units are copied into the operator's ~/.config/systemd/user by install.sh,
+          # and that copy is what systemd runs — replacing the one in the install directory would
+          # change nothing on the machine. Bringing them forward means reinstalling the units, which
+          # is a different job from refreshing a file.
+          EXCEPT = {
+              "kern-upgrade.sh",
+              "systemd/kern-auto-update.service",
+              "systemd/kern-auto-update.timer",
+              "systemd/kern-backup.service",
+              "systemd/kern-backup.timer",
+          }
+
+          downloaded = re.search(r"\nfor f in (.*?); do\n", open("install.sh").read(), re.S)
+          assert downloaded, "install.sh no longer has the `for f in ...; do` download loop"
+          downloaded = set(downloaded.group(1).replace("\\\n", " ").split())
+
+          carried = re.search(r'^STACK_FILES="([^"]*)"', open("kern-upgrade.sh").read(), re.M)
+          assert carried, "kern-upgrade.sh no longer declares STACK_FILES"
+          carried = set(carried.group(1).split())
+
+          failed = False
+          for f in sorted(downloaded - carried - EXCEPT):
+              failed = True
+              print(f"::error::install.sh downloads {f}, and no upgrade ever replaces it. Add it to "
+                    f"STACK_FILES in kern-upgrade.sh, or to EXCEPT here with the reason.")
+          for f in sorted(carried - downloaded):
+              failed = True
+              print(f"::error::kern-upgrade.sh brings {f} forward, but install.sh never puts it on "
+                    f"an instance. One of the two lists is wrong.")
+          sys.exit(1 if failed else 0)
+          PY
+          echo "✔ every distribution file is either carried forward or declared"
+
       # An upgrade used to change KERN_VERSION and pull images, and nothing else — install.sh
       # downloads a distribution file only when it is absent, so an instance kept the
       # docker-compose.yml, Caddyfile and postgres-init/ it was installed with for ever. Every fix

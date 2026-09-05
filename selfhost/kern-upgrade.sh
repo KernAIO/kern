@@ -97,10 +97,16 @@ set_env() { # set_env <KEY> <literal value>
 # kern-backup.sh and kern-rollback.sh are here because a fix to either of them otherwise reaches new
 # installs only, which is the whole disease this section treats.
 #
+# livekit.yaml is here because docker-compose.yml and it are one configuration split across two
+# files: the compose file publishes the ports and the yaml decides which ports LiveKit listens on.
+# Bringing one forward without the other leaves an instance mapping the ports of a release it is not
+# running, and the `calls` profile then starts a media server nothing can reach. install.sh has
+# always downloaded this file, so a fresh install gets it either way; an upgraded one never did.
+#
 # kern-upgrade.sh is deliberately NOT in the list: bash reads a script incrementally as it runs, so
 # rewriting this file underneath itself executes whatever lands at the byte offset the interpreter
 # had reached. It is offered at the end instead, for the operator to install between runs.
-STACK_FILES="docker-compose.yml Caddyfile postgres-init/01-extensions.sql .env.example kern-backup.sh kern-rollback.sh"
+STACK_FILES="docker-compose.yml Caddyfile livekit.yaml postgres-init/01-extensions.sql .env.example kern-backup.sh kern-rollback.sh"
 RAW_BASE="${KERN_RAW_BASE:-https://raw.githubusercontent.com/KernAIO/app}"
 
 # Where diffs and replaced originals are kept. Created only when there is something to put in it.

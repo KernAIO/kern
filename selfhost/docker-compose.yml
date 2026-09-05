@@ -352,7 +352,12 @@ services:
     command: ["--config", "/etc/livekit.yaml"]
     environment: { LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}" }
     volumes: ["./livekit.yaml:/etc/livekit.yaml:ro"]
-    ports: ["7881:7881", "50000-50200:50000-50200/udp"]
+    # Two ports, and both are named in livekit.yaml: 7882/udp carries every participant's media on
+    # one multiplexed socket and 7881/tcp is the fallback where a network blocks UDP. This published
+    # 50000-50200/udp until 2026-09-05 — 201 ports and 201 firewall rules. 7880 stays inside the
+    # Compose network: signalling is reached through Caddy on 443, and LiveKit's admin API is not
+    # something to put on the internet.
+    ports: ["7881:7881", "7882:7882/udp"]
 
   gotenberg:
     image: gotenberg/gotenberg:8

@@ -46,11 +46,17 @@ x-kern-env: &kern-env
   CHAT_URL: http://chat:4100
   MAIL_URL: http://mail:4200
   COLLAB_URL: http://collab:4300
-  # Calls need a LiveKit with its own UDP range, which Coolify's proxy cannot front. Off until
-  # there is a LiveKit to point at.
-  LIVEKIT_URL: ${LIVEKIT_URL:-}
-  LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
-  LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+  # Calls need a LiveKit of their own, which Coolify's proxy cannot front. Off until there is one
+  # to point at.
+  #
+  # Bare keys, not `${LIVEKIT_URL:-}`. The default form emits the key with an *empty value*, and an
+  # empty string is a value a zod schema tells apart from an absence: `KERN_SIGNUP: ${KERN_SIGNUP:-}`
+  # is what stopped core booting on every fresh install for a fortnight. A bare key sets the variable
+  # only when the host actually sets it. `docker compose config` prints `null` either way, so this is
+  # verified by running a container, never by reading the config.
+  LIVEKIT_URL:
+  LIVEKIT_API_KEY:
+  LIVEKIT_API_SECRET:
   # Billing. Empty until live Stripe keys exist — and until they do, every workspace resolves to
   # unlimited, which is the wrong answer for a paid instance. See
   # docs/adr/0003-billing-entitlements-and-cloud.md.

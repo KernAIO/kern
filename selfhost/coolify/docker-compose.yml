@@ -49,11 +49,17 @@ x-kern-env: &kern-env
   CHAT_URL: http://chat:4100
   MAIL_URL: http://mail:4200
   COLLAB_URL: http://collab:4300
-  # Calls need a LiveKit server with its own UDP ports, which is not something Coolify's proxy can
+  # Calls need a LiveKit server with its own UDP port, which is not something Coolify's proxy can
   # front. Point these at a LiveKit you run separately, or leave them alone and calls stay off.
-  LIVEKIT_URL: ${LIVEKIT_URL:-}
-  LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
-  LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+  #
+  # Bare keys, not `${LIVEKIT_URL:-}`. The default form emits the key with an *empty value*, and an
+  # empty string is a value a zod schema tells apart from an absence: `KERN_SIGNUP: ${KERN_SIGNUP:-}`
+  # is what stopped core booting on every fresh install for a fortnight. A bare key sets the variable
+  # only when the host actually sets it. `docker compose config` prints `null` either way, so this is
+  # verified by running a container, never by reading the config.
+  LIVEKIT_URL:
+  LIVEKIT_API_KEY:
+  LIVEKIT_API_SECRET:
   # Billing. Empty on a normal install: the module ships in the image and does nothing until an
   # instance both defines plans and sets a Stripe key.
   STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}

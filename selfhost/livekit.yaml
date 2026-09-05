@@ -1,8 +1,35 @@
+# LiveKit's server configuration, mounted read-only at /etc/livekit.yaml by the `calls` profile in
+# docker-compose.yml. The API key and secret are not here: they arrive as LIVEKIT_KEYS in that
+# service's environment, because Compose interpolates into a compose file and never into a file it
+# mounts.
+#
+# Media rides two ports and no more. LiveKit multiplexes every participant onto one UDP socket
+# (rtc.udp_port) and falls back to one TCP socket (rtc.tcp_port) where a network blocks UDP, so an
+# operator opens two ports rather than a range. The rtc.port_range_start / rtc.port_range_end pair
+# this file carried until 2026-09-05 published 50000-50200 — 201 UDP ports on the host, and 201
+# firewall rules for whoever runs it. That is the configuration the installer's call prompt was
+# deleted over, and it is the reason it can come back.
+#
+# Kern ships no TURN server. A network that blocks both UDP and non-web TCP will not connect.
+
+# Signalling and the admin API. Deliberately not published by docker-compose.yml: nothing outside
+# the Compose network reaches this port directly.
 port: 7880
+
 rtc:
+  # The fallback, for a network that permits no outbound UDP.
   tcp_port: 7881
-  port_range_start: 50000
-  port_range_end: 50200
+  # Every participant's media, multiplexed onto this one socket.
+  udp_port: 7882
+  # ICE candidates have to carry an address a browser on another network can reach, not the
+  # container's private one.
   use_external_ip: true
+
 turn:
   enabled: false
+
+room:
+  # A room exists only because something holding the API secret created it. Left true — LiveKit's
+  # default — any holder of a join token conjures the room named in it, and a room Kern has no
+  # record of has no membership, no history, and nobody who can end it.
+  auto_create: false
