@@ -177,6 +177,20 @@ in `repos/core/src/service.ts` (`featureModules`) — a fork of both. v1.0 makes
       `workspaces` (looked up by a stranger's token and by the scheduler), and in core `files`,
       `invitations`, `mcp_codes`, `mcp_consents` and `mcp_tokens` — those five have explicit
       filters everywhere and are the next thing to put behind a policy.
+      **This list said ten and the database says twelve** (2026-09-05). `mod_core.memberships` and
+      `mod_core.notifications` carry `workspace_id` and no policy: deliberate, and named as global
+      in `repos/core/CLAUDE.md` because both are read outside any workspace binding — but a list
+      that omits the two a reader cares about most is not an inventory. Counted against the live
+      catalogue rather than the migration text, which is the only source that settles it: 155
+      tenant tables in `mod_*`, 143 with RLS enabled, forced and holding a policy, and these
+      twelve without. Ask `pg_class`/`pg_policy` on a real database; a `create policy` grep over
+      the SQL cannot see a table nobody wrote one for.
+- [ ] **The guard that should catch a missing policy cannot see one.** Only `chat`'s and `mail`'s
+      `migrations.test.ts` assert that no tenant table lacks a policy. The other five assert
+      `FORCE` on tables that already have one, so a table with no policy passes by never being
+      looked at — which is exactly how twelve went uncounted while every module's test was green.
+      Copy chat's catalogue query into the other five, and make it fail on any `mod_*` table with a
+      `workspace_id` column that is absent from the module's own declared exception list.
 - [x] Rate limits and security headers checked from outside: `scripts/check-edge.sh`
       (2026-09-04). It found the shell sent no HSTS — Caddy now adds it; the cloud gets it at the
       next rollout.
