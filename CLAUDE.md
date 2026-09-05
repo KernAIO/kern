@@ -507,6 +507,21 @@ When you learn something durable, add it here **in the same commit as the change
 - a decision and the reason behind it, especially where the obvious choice is wrong
 Keep it specific and short. Delete anything that stops being true — a stale note is worse than none.
 
+**Write only what you measured, and never the mechanism you assume explains it.** On 2026-09-05
+three consecutive rounds tried to correct false statements in this project's own notes, and every
+one of them introduced a new false statement while doing it. The pattern was identical each time:
+the observation was right and the *causal explanation attached to it* was invented. "The suite is
+64/64" was true when written and false an hour later; "that 500 is the deserialiser failing" was
+never measured; "five pages said X" was six. None of it was carelessness — each sentence sounded
+obviously right, which is exactly why nobody checked it.
+
+So the rule for a note, a code comment or a commit body: state the observation and how you produced
+it, and stop. If you want to explain *why*, run the thing that proves the why, or write "cause not
+established". A count, a version and a test total are observations with a shelf life — pin them to a
+date or leave them out. A causal claim in a comment is not documentation, it is an untested
+assertion that the next person will build on, and this file is the most-trusted text in the project
+precisely because people do not re-derive what it says.
+
 ---
 
 # This repository: app (umbrella)
