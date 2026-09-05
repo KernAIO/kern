@@ -260,17 +260,24 @@ The repositories are **public**, so every commit is visible the moment it is pus
   CI resolved 0.2.x while every local build used 0.5.0. When you widen a contract, grep for the
   places that *construct* the type, and bump the consumer's range in the same change — green CI on
   a stale range is not evidence.
-- **Below 1.0.0, an additive field in `@kernhq/contracts` is free as a patch and costs twelve
-  repositories as a minor.** Adding `archivedAt` to `WorkspaceSummary` is as additive as a change
-  gets, and "new field → minor" is the semver reflex, so the changeset said minor and contracts
-  published 0.8.0. A caret on 0.x does not cross a minor, so that one word invalidated **every**
-  module's `contracts` peer range at once — `check-ranges` failed core's lint naming five of them —
-  and the honest repair is to republish all seven modules against `^0.8.0` and then bump the range
-  in all five services, because the rule is that the module moves and the host never moves down.
-  As **0.7.1** the same field would have been reached by every existing `^0.7.0` peer and every
-  service range, and the fan-out would have been zero. Ask what a bump *costs the graph* before
-  picking it: a field nothing is required to construct is a patch here, and a minor is for a change
-  consumers actually have to be stopped on.
+- **Below 1.0.0, one optional field in `@kernhq/contracts` costs thirteen repositories as a minor
+  and nothing as a patch.** Adding `archivedAt` to `WorkspaceSummary` is as additive as a change
+  gets, and "new field → minor" is the correct semver reflex and the wrong answer here: the
+  changeset said minor, contracts published 0.8.0, and because a caret on 0.x does not cross a
+  minor that one word invalidated **every** `contracts` range in the organisation at once. It went
+  red in all eight `module-*` repos and all five services — and those repos are not merely red but
+  *untested*, because `lint` runs first and `typecheck`, `test` and `build` never execute. The
+  repair is the whole graph in order: republish all eight modules peering `^0.8.0` (2026-09-05:
+  tracker 0.12.1, quire 0.17.1, hr 0.23.7, inventory 0.5.3, billing 0.5.16, chat 0.5.1, mail 0.6.2,
+  template 0.2.12), *then* bump core, chat, mail, collab and shell — the module moves and the host
+  never moves down, because a host installs one copy and lowering it drags every other module with
+  it. Released as **0.7.1** the identical field would have been reached by every existing `^0.7.0`
+  peer and every service range, and the fan-out would have been zero.
+  **The exception, so nobody over-corrects:** a field consumers *construct* rather than merely parse
+  is genuinely breaking and deserves the minor — zod's inferred output type makes a required field
+  mandatory at every construction site. `.nullish()` is precisely what kept this one additive, and
+  it is the thing to reach for when the intent is "new data flowing outward". Ask what a bump costs
+  the graph before picking it.
 - **A cache that is down must cost latency, never correctness.** `Authz.effective()` awaited the
   cache directly, so an unreachable Valkey threw ioredis' `MaxRetriesPerRequestError` out through
   `can()` and `core.workspaces.myPermissions` answered **500** — while `/api/health` stayed green,
