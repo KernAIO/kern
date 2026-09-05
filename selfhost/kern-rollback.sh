@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Go back to the version an upgrade snapshot was taken from.
 #
-#   ./kern-rollback.sh                          use the newest snapshot
+#   ./kern-rollback.sh                          use the newest snapshot that records a version
 #   ./kern-rollback.sh snapshots/1.1.0-to-1.2.0-20260822-140301
 #   ./kern-rollback.sh <snapshot> --database    also restore the database
 #   ./kern-rollback.sh <snapshot> --version X   go back to X, whatever the snapshot recorded
@@ -40,8 +40,35 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$SNAP" ]; then
-  SNAP="$(ls -1dt "$SNAPSHOT_DIR"/*/ 2>/dev/null | head -1 || true)"
-  [ -n "$SNAP" ] || fail "No snapshots in $SNAPSHOT_DIR. Pass one, or set KERN_VERSION in .env by hand."
+  # The newest snapshot that can actually be rolled back to, not the newest directory. An upgrade
+  # writes its stack-file diffs into this same directory as `stack-<stamp>/`, and creates it *after*
+  # the snapshot — so `head -1` of `ls -1dt` picked one of those on every instance whose upgrade
+  # touched a stack file, and this script then refused with "has no from-version file" while a
+  # perfectly good snapshot sat beside it. install.sh prints `./kern-rollback.sh` as the way out of
+  # a bad upgrade, so that is the documented recovery path failing.
+  #
+  # The test is the from-version file rather than the `*-to-*` naming the prune globs on: it is the
+  # property the next line actually needs, so a snapshot from an older layout still qualifies and
+  # anything else in here never does.
+  CANDIDATES=0
+  while IFS= read -r dir; do
+    CANDIDATES=$((CANDIDATES + 1))
+    [ -f "${dir}from-version" ] || continue
+    SNAP="$dir"
+    break
+  done < <(ls -1dt "$SNAPSHOT_DIR"/*/ 2>/dev/null || true)
+  if [ -z "$SNAP" ]; then
+    [ "$CANDIDATES" -gt 0 ] \
+      || fail "No snapshots in $SNAPSHOT_DIR. Pass one, or set KERN_VERSION in .env by hand."
+    fail "$(printf '%s\n' \
+      "Nothing in $SNAPSHOT_DIR records the version it was taken from." \
+      "" \
+      "An upgrade writes one; a stack-<stamp>/ directory is the diffs an upgrade left for you to" \
+      "merge, not a snapshot. Pick a release from https://github.com/KernAIO/app/releases and pass" \
+      "it instead:" \
+      "" \
+      "    ./kern-rollback.sh $SNAPSHOT_DIR/<snapshot> --version 1.2.0")"
+  fi
 fi
 SNAP="${SNAP%/}"
 [ -d "$SNAP" ] || fail "No such snapshot: $SNAP"

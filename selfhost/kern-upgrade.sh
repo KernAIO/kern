@@ -482,12 +482,18 @@ if [ -d "$SNAPSHOT_DIR" ]; then
   ls -1dt "$SNAPSHOT_DIR"/*-to-*/ 2>/dev/null | tail -n +"$(( KEEP_SNAPSHOTS + 1 ))" | xargs -r rm -rf
 fi
 
+# What the panel is told. One helper so the two callers cannot drift: whatever an unattended run
+# reports here is what Admin -> Updates shows, and it has to be the same verdict the shell exits on.
+record_attempt() { # record_attempt ok|failed [message]
+  compose exec -T core node dist/updates-cli.js record "$TARGET" "$@" >/dev/null 2>&1 || true
+}
+
 undo() {
   if [ "$AUTO" = true ]; then
     # Tell the instance it failed. The next run reads this and stands down until an admin has
     # looked — a nightly job that keeps retrying the release that broke turns one bad night into
     # a week of them.
-    compose exec -T core node dist/updates-cli.js record "$TARGET" failed "$1" >/dev/null 2>&1 || true
+    record_attempt failed "$1"
     logger -t kern-auto-update "upgrade to $TARGET failed: $1" 2>/dev/null || true
   fi
   printf '\n\033[31m✖ %s\033[0m\n' "$1" >&2
@@ -578,15 +584,16 @@ fi
 
 [ -z "$FAILED" ] || undo "These services are not on $TARGET:$FAILED"
 
-if [ "$AUTO" = true ]; then
-  compose exec -T core node dist/updates-cli.js record "$TARGET" ok >/dev/null 2>&1 || true
-  logger -t kern-auto-update "upgraded to $TARGET" 2>/dev/null || true
-fi
-
 # The images moved either way, so this is not a failed upgrade — but it is not a finished one, and it
 # used to print the same green tick in both cases. A release whose fix lives in the Caddyfile or the
 # compose file has not reached an instance that kept its own copy, and the only person who can finish
 # the job is the operator reading this line.
+#
+# The outcome is recorded after this verdict, never before it. Recorded above and exited on below,
+# the two disagreed: Admin -> Updates said the release was applied while systemd marked
+# kern-auto-update.service failed for the same run, because the unit is Type=oneshot and reads any
+# non-zero status as a failure. An operator seeing a red unit every night for an upgrade that
+# worked stops reading them, which is how the night one genuinely fails goes unnoticed.
 if [ -n "$STACK_BLOCKED" ]; then
   report_blocked_stack_files
   printf '\033[33m⚠ Kern is on %s, but this upgrade could not deliver all of it — see above.\033[0m\n' "$TARGET"
@@ -594,7 +601,25 @@ if [ -n "$STACK_BLOCKED" ]; then
   printf '  To go back:      %s/kern-rollback.sh %s\n' "$DIR" "$SNAP"
   offer_new_upgrade_script
   printf '\n'
+  if [ "$AUTO" = true ]; then
+    # `ok` is the honest record: the images moved, the migrations ran and every service reports
+    # $TARGET a few lines above, so the release IS applied. `failed` would also stand the timer
+    # down until an admin cleared it — and the file is still edited tomorrow night, so a locally
+    # edited Caddyfile would silently end automatic updates for good.
+    record_attempt ok
+    logger -t kern-auto-update \
+      "upgraded to $TARGET; these files still need merging by hand:$STACK_BLOCKED" 2>/dev/null || true
+    # Warning, not failure, for the unattended run: the work waiting for an operator is in the
+    # journal and in the panel, and neither of them needs the unit painted red to be found. A person
+    # at a terminal gets the non-zero status, because there the exit code is the only signal.
+    exit 0
+  fi
   exit 1
+fi
+
+if [ "$AUTO" = true ]; then
+  record_attempt ok
+  logger -t kern-auto-update "upgraded to $TARGET" 2>/dev/null || true
 fi
 
 printf '\n\033[32m✔ Kern is on %s.\033[0m\n' "$TARGET"

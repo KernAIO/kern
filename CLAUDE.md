@@ -619,9 +619,38 @@ pnpm dev       # every service with hot reload
   now; the dot is what keeps it out of both globs. `kern-upgrade.sh`'s snapshot prune had the mirror
   image of the problem — `ls -1dt "$SNAPSHOT_DIR"/*/` would have swept the new `stack-<stamp>/`
   directories holding the diffs an operator was just told to merge, and evicted a real snapshot to
-  make room — so it globs `*-to-*/`, the snapshot naming pattern. And an `EXIT` trap whose last
-  command fails **takes the script's exit status with it**: end a cleanup handler in `return 0` or
-  systemd reports every successful backup as a failure.
+  make room — so it globs `*-to-*/`, the snapshot naming pattern. And under `set -e` an `EXIT` trap
+  whose last command fails **takes the script's exit status with it**: end a cleanup handler in
+  `return 0` or systemd reports every successful backup as a failure.
+- **`return 0` is right for `EXIT` and catastrophic for `INT` and `TERM`, and one handler served all
+  three.** A *signal* handler that returns hands control back to the line after the interrupted one,
+  so a Ctrl-C or the timer's `TimeoutStartSec` deleted the working directory, the script carried on,
+  `mkdir -p` made it again, and the publish moved a directory holding **no database dump** into place
+  under a green "Backup complete" — then the prune counted it and deleted a real backup to stay under
+  the limit. Strictly worse than the truncated dump that fix replaced, and it shipped hours after it.
+  `trap cleanup EXIT` and `trap 'cleanup; exit 130' INT` are two different jobs. Then check the
+  artefacts before publishing rather than inferring them from "no step reported a failure": that is
+  precisely the claim the interrupted run was still able to make. Prove this class by *sending the
+  signal*, at each phase, from a stub whose command then still exits 0 — `selfhost.yml` does, and
+  note that a backgrounded run would pass it for the wrong reason, because an asynchronous command
+  in a non-interactive shell inherits `SIGINT` ignored and a script cannot trap what was ignored on
+  entry.
+- **A new kind of entry in a shared directory means fixing every reader of it, not the one you were
+  looking at.** The `stack-<stamp>/` diffs an upgrade leaves in `snapshots/` were kept out of the
+  snapshot *prune* and not out of `kern-rollback.sh`'s auto-select, which took the newest
+  **directory** — and the stack directory is created after the snapshot, so it always sorts first.
+  `./kern-rollback.sh` with no argument then died with "has no from-version file" while a perfectly
+  good snapshot sat beside it: `install.sh` prints that command as the way out of a bad upgrade, so
+  the documented recovery path was broken by the change that made upgrades safer. Select on the
+  property you actually need — here a `from-version` file — rather than on a naming convention.
+- **A `Type=oneshot` unit's exit code is something an operator reads every night.** `kern-upgrade.sh`
+  recorded the auto-update outcome *before* the stack-file verdict and then exited 1 on it, so
+  Admin → Updates showed the release applied while `kern-auto-update.service` showed failed, for an
+  upgrade that worked, every night for as long as one file stayed edited — which is how the night one
+  genuinely fails goes unread. Record an outcome after the verdict it describes, and keep a non-zero
+  exit for what a person's *shell* is the right place to learn. Recording `failed` instead would have
+  been worse than the red unit: the timer stands down until an admin clears it, and the operator's
+  edited Caddyfile is still edited tomorrow night, so automatic updates would have ended for good.
 - **The images are `amd64` only.** `docker.yml` in each service repo has no `platforms:`, so
   `build-push-action` builds for the runner. Every requirement we publish says x86-64 because of
   that one omission — adding `platforms: linux/amd64,linux/arm64` (and QEMU) is what changes it.

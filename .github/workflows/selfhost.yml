@@ -199,6 +199,239 @@ jobs:
           echo "✔ refused with a diff, and the unedited files still came forward"
           rm -rf "$WORK"
 
+      # ---------------------------------------------------------------- the recovery path
+      #
+      # The three steps below are the scripts an operator reaches for when something has gone wrong,
+      # so a defect in one costs a customer their data rather than their patience. Each is a
+      # regression that shipped: they are here as the reproduction that found it, not as a summary
+      # of the fix.
+
+      # kern-upgrade.sh writes the stack-file diffs an operator has to merge into snapshots/ as
+      # `stack-<stamp>/`, and creates it *after* the snapshot — so on any instance whose upgrade
+      # touched a stack file the newest directory in there is not a snapshot at all. Selecting it
+      # made `./kern-rollback.sh` refuse with "no from-version file" while a good snapshot sat
+      # beside it, and install.sh prints that command as the way out of a bad upgrade.
+      - name: A rollback with no argument picks a snapshot it can use
+        run: |
+          set -euo pipefail
+          W=$(mktemp -d); I="$W/instance"; mkdir -p "$I/snapshots" "$W/bin"
+          cp selfhost/kern-rollback.sh "$I/"; chmod +x "$I/kern-rollback.sh"
+          printf "KERN_VERSION='1.2.0'\n" > "$I/.env"
+
+          # A stand-in for docker, so the rollback can be driven to its last line without a stack.
+          printf '#!/bin/sh\nexit 0\n' > "$W/bin/docker"; chmod +x "$W/bin/docker"
+
+          # Laid out exactly as an upgrade leaves it: the snapshot, then the stack diffs beside it.
+          mkdir -p "$I/snapshots/1.1.0-to-1.2.0-20260905-140301"
+          printf '1.1.0\n' > "$I/snapshots/1.1.0-to-1.2.0-20260905-140301/from-version"
+          sleep 1
+          mkdir -p "$I/snapshots/stack-20260905-140302"
+          printf 'diff\n' > "$I/snapshots/stack-20260905-140302/Caddyfile.diff"
+          [ "$(ls -1dt "$I"/snapshots/*/ | head -1)" = "$I/snapshots/stack-20260905-140302/" ] \
+            || { echo "::error::fixture is wrong — the stack directory is not the newest"; exit 1; }
+
+          if ! ( cd "$I" && PATH="$W/bin:$PATH" ./kern-rollback.sh ) > "$W/out" 2>&1; then
+            echo "::error::the rollback refused with a usable snapshot on disk"; cat "$W/out"; exit 1
+          fi
+          if grep -q 'no from-version file' "$W/out"; then
+            echo "::error::it picked a stack-<stamp> directory instead of the snapshot"; cat "$W/out"; exit 1
+          fi
+          grep -q 'Kern is back on 1.1.0' "$W/out" \
+            || { echo "::error::the rollback did not complete"; cat "$W/out"; exit 1; }
+          grep -q "^KERN_VERSION='1.1.0'$" "$I/.env" \
+            || { echo "::error::KERN_VERSION was not put back"; cat "$I/.env"; exit 1; }
+          echo "✔ the newest snapshot that records a version is the one it used"
+          rm -rf "$W"
+
+      # A backup interrupted at the wrong moment was published as a complete one. The trap ran the
+      # same handler for EXIT, INT and TERM, and a *signal* handler that returns hands control back
+      # to the line after the interrupted one — so the working directory was deleted, the script
+      # carried on, mkdir made it again, and the publish moved a directory holding no database dump
+      # into place under a green "Backup complete". The prune then counted it and deleted a real
+      # backup to stay under the limit.
+      #
+      # It turns entirely on when the signal arrives, so no reviewer will spot it: this drives the
+      # signal in deliberately, at each phase, with a docker that still exits 0 afterwards.
+      - name: An interrupted backup is never published as a complete one
+        run: |
+          set -euo pipefail
+          W=$(mktemp -d); mkdir -p "$W/bin"
+
+          cat > "$W/bin/docker" <<'STUB'
+          #!/usr/bin/env bash
+          # Every compose command a backup issues succeeds. The one named in KERN_TEST_SIGNAL_AT
+          # signals the script first and then still exits 0 — the shape of a Ctrl-C, or of the
+          # backup timer's 6h TimeoutStartSec, arriving mid-run.
+          ARGS="$*"
+          signal_if_asked() {
+            [ "${KERN_TEST_SIGNAL_AT:-}" = "$1" ] || return 0
+            kill -"${KERN_TEST_SIGNAL:-TERM}" "$(cat "$KERN_TEST_PID")"
+            sleep 0.3
+          }
+          case "$ARGS" in
+            *"ps --status running --quiet postgres"*) exit 0 ;;
+            *"ps --status running --quiet minio"*)    signal_if_asked minio; exit 0 ;;
+            *pg_dump*) signal_if_asked dump; printf 'PGDMP'; head -c 40000 /dev/zero | tr '\0' 'x'; exit 0 ;;
+            *minio-init*) signal_if_asked mirror; exit 0 ;;
+          esac
+          exit 0
+          STUB
+          chmod +x "$W/bin/docker"
+
+          new_instance() { # new_instance <dir>
+            rm -rf "$1"; mkdir -p "$1/backups"
+            cp selfhost/kern-backup.sh "$1/kern-backup.sh"; chmod +x "$1/kern-backup.sh"
+            printf 'services: {}\n' > "$1/docker-compose.yml"
+            cat > "$1/.env" <<'ENV'
+          KERN_VERSION='1.2.0'
+          POSTGRES_USER='kern'
+          POSTGRES_DB='kern'
+          S3_BUCKET='kern'
+          S3_ACCESS_KEY='key'
+          S3_SECRET_KEY='secret'
+          S3_ENDPOINT='http://minio:9000'
+          ENV
+            # A good backup from an earlier night, so there is something real to lose.
+            mkdir -p "$1/backups/20260101-030000/files"
+            printf 'PGDMP-a-real-one\n' > "$1/backups/20260101-030000/database.dump"
+            printf 'real\n' > "$1/backups/20260101-030000/RESTORE.txt"
+          }
+
+          run_backup() { # run_backup <dir> <phase> <signal> [args...]
+            local dir="$1" phase="$2" sig="$3"; shift 3
+            # Foreground, not `&`: an asynchronous command in a non-interactive shell inherits
+            # SIGINT as ignored, and a script cannot trap a signal that was ignored on entry — so a
+            # backgrounded run would pass this for a reason that has nothing to do with the script.
+            ( cd "$dir" \
+              && PATH="$W/bin:$PATH" KERN_TEST_SIGNAL_AT="$phase" KERN_TEST_SIGNAL="$sig" \
+                 KERN_TEST_PID="$W/pid" \
+                 sh -c 'echo $$ > '"$W"'/pid; exec ./kern-backup.sh "$@"' -- "$@" \
+            ) > "$W/out" 2>&1
+          }
+
+          for phase in dump minio mirror; do
+            for sig in TERM INT; do
+              I="$W/i"; new_instance "$I"
+              if run_backup "$I" "$phase" "$sig"; then
+                echo "::error::a backup interrupted at $phase by SIG$sig reported success"
+                cat "$W/out"; exit 1
+              fi
+              if grep -q 'Backup complete' "$W/out"; then
+                echo "::error::SIG$sig at $phase printed a green Backup complete"; cat "$W/out"; exit 1
+              fi
+              published=$(ls -1d "$I"/backups/[0-9]*-[0-9]*/ 2>/dev/null | grep -cv '20260101-030000' || true)
+              [ "$published" -eq 0 ] \
+                || { echo "::error::SIG$sig at $phase published a backup"; ls -lR "$I/backups"; exit 1; }
+              [ -z "$(find "$I/backups" -maxdepth 1 -name '.*.partial')" ] \
+                || { echo "::error::SIG$sig at $phase left its working directory behind"; exit 1; }
+              [ -f "$I/backups/20260101-030000/database.dump" ] \
+                || { echo "::error::SIG$sig at $phase destroyed the backup that was already there"; exit 1; }
+              echo "  ✔ SIG$sig at $phase: nothing published, the existing backup untouched"
+            done
+          done
+
+          echo "== an uninterrupted backup is still published =="
+          I="$W/i"; new_instance "$I"
+          run_backup "$I" none TERM || { echo "::error::an ordinary backup failed"; cat "$W/out"; exit 1; }
+          grep -q 'Backup complete' "$W/out" || { echo "::error::no completion line"; cat "$W/out"; exit 1; }
+          NEW=$(ls -1d "$I"/backups/[0-9]*-[0-9]*/ | grep -v '20260101-030000' | head -1)
+          [ -s "${NEW}database.dump" ] \
+            || { echo "::error::a published backup holds no dump"; ls -l "$NEW"; exit 1; }
+          echo "✔ published $(basename "${NEW%/}") with its dump"
+
+          echo "== a copy with no dump never costs a real backup its place =="
+          I="$W/i"; new_instance "$I"
+          # What a run of the pre-2026-09-05 script left behind, dated so it sorts newest of all.
+          mkdir -p "$I/backups/29991231-000000"
+          printf 'config only\n' > "$I/backups/29991231-000000/.env"
+          run_backup "$I" none TERM --keep 1 \
+            || { echo "::error::the backup failed"; cat "$W/out"; exit 1; }
+          NEW=$(ls -1d "$I"/backups/[0-9]*-[0-9]*/ | grep -v -e 20260101-030000 -e 29991231-000000 | head -1)
+          [ -d "$NEW" ] \
+            || { echo "::error::the prune deleted the backup this run had just taken"; ls "$I/backups"; exit 1; }
+          [ ! -d "$I/backups/20260101-030000" ] \
+            || { echo "::error::--keep 1 kept two backups"; ls "$I/backups"; exit 1; }
+          grep -q 'not counted' "$W/out" \
+            || { echo "::error::the dump-less copy was not reported"; cat "$W/out"; exit 1; }
+          echo "✔ the dump-less copy was named and skipped, and the real backup kept its place"
+          rm -rf "$W"
+
+      # kern-auto-update.service is Type=oneshot, so any non-zero status paints the unit red. The
+      # CLI recorded the outcome before the stack-file verdict and then exited 1 for a blocked
+      # stack, so the panel showed the release applied while systemd showed a failed unit — every
+      # night, for as long as one file stayed edited. An operator who sees that stops reading it.
+      - name: A blocked stack file warns the timer, and fails a person's shell
+        run: |
+          set -euo pipefail
+          W=$(mktemp -d); mkdir -p "$W/bin" "$W/upstream/v0.0.1" "$W/upstream/v0.0.2"
+
+          cat > "$W/bin/docker" <<'STUB'
+          #!/usr/bin/env bash
+          # A healthy instance's answer to every compose command an upgrade issues, with each call
+          # appended to $KERN_TEST_LOG so the test can assert on what the instance was told.
+          ARGS="$*"
+          printf '%s\n' "$ARGS" >> "${KERN_TEST_LOG:-/dev/null}"
+          case "$ARGS" in
+            *"updates-cli.js plan"*) printf '{"shouldUpgrade": true, "version": "0.0.2", "reason": "in the window"}\n'; exit 0 ;;
+            *"ps --format"*) printf 'ghcr.io/kernaio/shell:0.0.2\n'; exit 0 ;;
+            *pg_database_size*) printf '10485760\n'; exit 0 ;;
+            *pg_dump*) printf 'PGDMP'; head -c 2000 /dev/zero | tr '\0' 'x'; exit 0 ;;
+            *"/api/health"*) printf '0.0.2\n'; exit 0 ;;
+          esac
+          exit 0
+          STUB
+          chmod +x "$W/bin/docker"
+
+          cp -R selfhost "$W/upstream/v0.0.1/selfhost"
+          cp -R selfhost "$W/upstream/v0.0.2/selfhost"
+          printf '\n# release 0.0.2 added this line\n' >> "$W/upstream/v0.0.2/selfhost/Caddyfile"
+
+          new_instance() { # new_instance <dir> — with a Caddyfile the operator has edited
+            rm -rf "$1"; mkdir -p "$1"
+            cp -R "$W/upstream/v0.0.1/selfhost/." "$1/"
+            cp selfhost/kern-upgrade.sh "$1/kern-upgrade.sh"; chmod +x "$1/kern-upgrade.sh"
+            printf "KERN_VERSION='0.0.1'\nPOSTGRES_USER='kern'\nPOSTGRES_DB='kern'\nKERN_DB_APP_PASSWORD='x'\nMAIL_WEBHOOK_TOKEN='x'\n" > "$1/.env"
+            printf '\n# the operator added a redirect here\n' >> "$1/Caddyfile"
+          }
+
+          upgrade() { # upgrade <dir> [args...]
+            : > "$W/calls"
+            ( cd "$1" && shift
+              PATH="$W/bin:$PATH" KERN_TEST_LOG="$W/calls" KERN_RAW_BASE="$W/upstream" \
+                ./kern-upgrade.sh "$@" ) > "$W/out" 2>&1
+          }
+
+          echo "== the timer's run: a warning, not a failed unit =="
+          I="$W/i"; new_instance "$I"
+          status=0; upgrade "$I" --auto || status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "::error::--auto exited $status for an upgrade it recorded as successful — a red unit every night"
+            cat "$W/out"; exit 1
+          fi
+          grep -q 'NOT brought forward' "$W/out" \
+            || { echo "::error::the blocked file was not reported"; cat "$W/out"; exit 1; }
+          grep -q "updates-cli.js record 0.0.2 ok" "$W/calls" \
+            || { echo "::error::the outcome the panel shows was not recorded"; cat "$W/calls"; exit 1; }
+          if grep -q "updates-cli.js record 0.0.2 failed" "$W/calls"; then
+            echo "::error::a blocked stack file was recorded as a failed upgrade — the timer would stand down for good"
+            exit 1
+          fi
+          # The edit is still there tomorrow night, so the run after this one must behave the same.
+          grep -q 'the operator added a redirect' "$I/Caddyfile" \
+            || { echo "::error::the operator's edit was overwritten"; exit 1; }
+          echo "✔ exit 0, recorded ok, and the operator was told what is left to merge"
+
+          echo "== a person at a terminal still gets a non-zero status =="
+          I="$W/i"; new_instance "$I"
+          if upgrade "$I" 0.0.2; then
+            echo "::error::an interactive run reported success for an undelivered upgrade"; cat "$W/out"; exit 1
+          fi
+          if grep -q 'updates-cli.js record' "$W/calls"; then
+            echo "::error::a run that is not --auto recorded an outcome"; cat "$W/calls"; exit 1
+          fi
+          echo "✔ interactive runs keep their exit 1"
+          rm -rf "$W"
+
       - name: Every variable the compose file reads is in .env.example
         working-directory: selfhost
         run: |

@@ -46,11 +46,40 @@ done
 
 case "$KEEP" in ''|*[!0-9]*) fail "--keep takes a number, not \"$KEEP\"." ;; esac
 
+# Does this directory hold a database dump? That is the one artefact whose absence makes a copy
+# worthless — everything else in a backup is written in a fraction of a second at the end of the
+# run, so a directory holding the configuration and not the dump is exactly what an interrupted
+# backup leaves behind. `PGDMP` is pg_dump's custom-format magic, so this rejects an empty file and
+# a shell error message caught by the redirection alike.
+#
+# Deliberately only the dump: --list and the prune ask this of directories written by whatever
+# version of this script was installed at the time, and a copy taken before object storage was
+# mirrored is still a copy of the database. What *this* run must have produced is a longer list, and
+# is checked separately just before publishing.
+holds_a_dump() { # holds_a_dump <directory>
+  [ -s "$1/database.dump" ] || return 1
+  [ "$(head -c 5 "$1/database.dump" 2>/dev/null)" = "PGDMP" ] || return 1
+  return 0
+}
+
 if [ "$LIST_ONLY" = true ]; then
   [ -d "$BACKUP_DIR" ] || fail "No backups in $BACKUP_DIR yet."
   # The same glob the prune uses, so what this lists and what that counts are the same set. A backup
   # in progress is a dot-prefixed `.<stamp>.partial` directory and matches neither.
-  du -sh "$BACKUP_DIR"/[0-9]*-[0-9]*/ 2>/dev/null || fail "No backups in $BACKUP_DIR yet."
+  FOUND=false
+  for d in "$BACKUP_DIR"/[0-9]*-[0-9]*/; do
+    [ -d "$d" ] || continue
+    FOUND=true
+    if holds_a_dump "${d%/}"; then
+      printf '%s\t%s\n' "$(du -sh "$d" | cut -f1)" "${d%/}"
+    else
+      # Said here rather than left for the night the restore is needed. Only a run of the script as
+      # it stood before 2026-09-05 can have left one of these.
+      printf '%s\t%s\t\033[33m⚠ no database dump — not a backup, and not counted\033[0m\n' \
+        "$(du -sh "$d" | cut -f1)" "${d%/}"
+    fi
+  done
+  [ "$FOUND" = true ] || fail "No backups in $BACKUP_DIR yet."
   exit 0
 fi
 
@@ -81,11 +110,26 @@ DEST="$BACKUP_DIR/$STAMP"
 WORK="$BACKUP_DIR/.$STAMP.partial"
 mkdir -p "$WORK" || fail "Could not create $WORK."
 
-# `return 0` is load-bearing, not tidiness. An EXIT trap whose last command fails takes the whole
-# script's exit status with it, so a handler ending in a false test turns a completed backup into a
-# non-zero exit — and systemd would mail the operator a failure every night for a backup that worked.
+# `return 0` is load-bearing, not tidiness. Under `set -e` an EXIT trap whose last command fails
+# takes the whole script's exit status with it, so a handler ending in a false test turns a
+# completed backup into a non-zero exit — and systemd would mail the operator a failure every night
+# for a backup that worked.
 cleanup_failed() { [ -n "${WORK:-}" ] && rm -rf "$WORK"; return 0; }
-trap cleanup_failed EXIT INT TERM
+
+# A signal has to END the run, and until it did this script published the interrupted backup as a
+# good one. `trap cleanup_failed EXIT INT TERM` ran the same handler for all three, and a signal
+# handler that returns hands control back to the line after the one that was interrupted: the
+# working directory had just been deleted, so the script carried on, `mkdir -p "$WORK/files"` made
+# it again, the configuration was copied into it, and the publish moved a directory holding no
+# database dump into place under a green "Backup complete". Worse than the truncated dump it
+# replaced — that at least had rows in it — and the prune then deleted a real backup to keep it.
+#
+# So EXIT tidies up and the two signals tidy up and leave, 128+signal as a shell conventionally
+# reports a death by one. The timer's 6h TimeoutStartSec sends TERM and a Ctrl-C sends INT; both
+# now end with nothing published and a non-zero status, which is what systemd should see.
+trap cleanup_failed EXIT
+trap 'cleanup_failed; exit 130' INT
+trap 'cleanup_failed; exit 143' TERM
 
 # Sweep working directories an earlier run abandoned. Only ones untouched for a day, so a backup
 # running right now in another shell is never touched.
@@ -191,6 +235,25 @@ EOS
 # Every part is now written, so the backup becomes a backup. Until this line there was nothing under
 # a name anything else looks at; after it there is nothing under a name that is incomplete. Clearing
 # the trap first is what stops the EXIT handler deleting the finished copy.
+#
+# Checked rather than assumed, and this is the second lock rather than the first: reaching here
+# means no step reported a failure, which is exactly the claim an interrupted run was able to make
+# while its dump had been deleted out from under it. A backup that cannot prove it holds a dump is
+# not published — the run fails, the working directory goes, and the operator is told tonight
+# instead of on the night they need it.
+if ! holds_a_dump "$WORK" \
+  || { [ ! -d "$WORK/files" ] && [ ! -f "$WORK/files-EXTERNAL.txt" ]; } \
+  || [ ! -f "$WORK/RESTORE.txt" ]; then
+  fail "$(printf '%s\n' \
+    "This backup is missing something a restore needs, so it was NOT published:" \
+    "" \
+    "    database.dump   $(holds_a_dump "$WORK" && echo present || echo MISSING)" \
+    "    files/          $({ [ -d "$WORK/files" ] || [ -f "$WORK/files-EXTERNAL.txt" ]; } && echo present || echo MISSING)" \
+    "    RESTORE.txt     $([ -f "$WORK/RESTORE.txt" ] && echo present || echo MISSING)" \
+    "" \
+    "Nothing was kept, and the backups you already have are untouched. Run it again.")"
+fi
+
 mv "$WORK" "$DEST" || fail "Could not move $WORK into place as $DEST."
 WORK=""
 trap - EXIT INT TERM
@@ -201,14 +264,34 @@ step "Pruning"
 # Keep the newest $KEEP and no more, so backups cannot fill the disk on their own. Only directories
 # that look like a stamp are considered, so nothing else in here is ever deleted — and a backup still
 # being written is `.<stamp>.partial`, which this glob cannot match on either count.
-mapfile -t OLD < <(ls -1d "$BACKUP_DIR"/[0-9]*-[0-9]*/ 2>/dev/null | sort -r | tail -n +"$((KEEP + 1))")
-if [ "${#OLD[@]}" -gt 0 ]; then
-  for old in "${OLD[@]}"; do
-    rm -rf "$old"
-    info "removed $(basename "$old")"
-  done
-else
-  info "nothing to prune (keeping $KEEP)"
+#
+# Counted, not merely listed: a directory that cannot be restored from does not fill one of the
+# $KEEP places. Counting it did the real damage in the failure this script is built around — the
+# broken copy sorts newest, so it took a place every night while a genuine backup was deleted to
+# stay under the limit, and after $KEEP nights every copy on disk was the broken one. It is left
+# where it is rather than deleted: it may hold an object storage mirror, and it is not this
+# script's business to decide that for an operator who has not seen it yet.
+mapfile -t STAMPED < <(ls -1d "$BACKUP_DIR"/[0-9]*-[0-9]*/ 2>/dev/null | sort -r)
+KEPT=0
+REMOVED=0
+UNRESTORABLE=""
+for dir in ${STAMPED[@]+"${STAMPED[@]}"}; do
+  if ! holds_a_dump "${dir%/}"; then
+    UNRESTORABLE="$UNRESTORABLE $(basename "${dir%/}")"
+    continue
+  fi
+  KEPT=$((KEPT + 1))
+  if [ "$KEPT" -gt "$KEEP" ]; then
+    rm -rf "$dir"
+    info "removed $(basename "${dir%/}")"
+    REMOVED=$((REMOVED + 1))
+  fi
+done
+[ "$REMOVED" -gt 0 ] || info "nothing to prune (keeping $KEEP)"
+if [ -n "$UNRESTORABLE" ]; then
+  printf '\n\033[33m⚠ These hold no database dump, so they are not backups and were not counted:\033[0m\n' >&2
+  for dir in $UNRESTORABLE; do printf '      %s\n' "$BACKUP_DIR/$dir" >&2; done
+  printf '  A run interrupted before 2026-09-05 left them. Delete them once you have looked.\n' >&2
 fi
 
 printf '\n\033[32m✔ Backup complete: %s (%s)\033[0m\n' "$DEST" "$(du -sh "$DEST" | cut -f1)"
