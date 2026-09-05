@@ -1,0 +1,33 @@
+name: Workspace checks
+# The umbrella had no CI of its own: `selfhost.yml` covers the distribution and nothing covered the
+# scripts that assemble the workspace. So `pnpm setup` could clone the wrong set of repositories and
+# `pnpm build|lint|test|typecheck` could skip an entire repository — which is exactly what happened
+# to `shell` — with nothing anywhere going red.
+#
+# This runs the one check that needs no workspace to run: does the repository list still match the
+# organisation? Everything else here (`pnpm lint`, `typecheck`, `test`) drives the other repositories
+# and cannot run without them cloned, which is the job of each repository's own CI.
+on:
+  push: { branches: [main], paths: ['scripts/**', 'package.json', '.github/workflows/checks.yml'] }
+  pull_request: { paths: ['scripts/**', 'package.json', '.github/workflows/checks.yml'] }
+  schedule:
+    # A repository created in the organisation does not touch this repository, so nothing above
+    # would notice it. Weekly is enough for "somebody made a repo and nothing here knows".
+    - cron: '17 6 * * 1'
+
+permissions: { contents: read }
+
+jobs:
+  repos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      # No install: check-repos.mjs imports one local module and shells out to `gh`, which the
+      # runner already has. Without a token `gh` fails and the check falls back to the committed
+      # inventory, so this still says something rather than nothing.
+      - name: The repository list still matches the organisation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-repos.mjs
