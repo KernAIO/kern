@@ -99,6 +99,11 @@ Legend: **(core)** always on · others enable/disable per workspace. "v1.x" = ri
 
 ### 4.1 Repos & services (GitHub org `KernAIO`)
 
+> This table is the layout as planned, and the names moved: the umbrella is `app`, the front end is
+> `shell`, `KernAIO/modules` was split into one repository per module and archived on 2026-08-25,
+> and `KernAIO/cloud` was never created. For what exists today, read the table in `README.md` or run
+> `node scripts/repos.mjs`.
+
 | Repo | Type | Purpose |
 |---|---|---|
 | `KernAIO/kern` | umbrella | Project face: README, **self-host** (`docker-compose.yml`, profiles, `install.sh`, Caddyfile), architecture/ADR docs, **dev workspace** (`pnpm-workspace.yaml` linking sibling clones), release manifests, issue templates, CLA. |
