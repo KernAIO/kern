@@ -324,6 +324,28 @@ The repositories are **public**, so every commit is visible the moment it is pus
   (`chat/src/gateway.ts` holds pre-auth messages, `@kernhq/sdk` waits for `welcome`); the rule
   behind them is that an accepted TCP socket is not an authenticated session, so nothing may be
   sent, counted or reported as connected until the server says so.
+- **A check that reads the request only covers the service that has the request, and core is not
+  the only host.** The MCP scope check — an AI client's `kmt_…` token held to the
+  `<module>:<read|write>` its consent screen named — was written inside core's `resolve()`, off the
+  `FastifyRequest`. It therefore covered the modules core hosts and *nothing else*: `chat`, `mail`
+  and `collab` have no such request, they hand the bearer to `core.users.principal` and act on the
+  answer, and that call passed the token alone — so the very same read-only token came back as its
+  owner's **full** principal and could write there. Not an internal matter either, which is the part
+  that makes it a breach rather than a wrinkle: the shipped Caddyfiles route `/api/chat/*`,
+  `/api/mail/*` and `/collab*` **from the edge** to those services, so the token holder reaches them
+  without passing through core at all. The fix is that the caller states the need
+  (`{ module, write }`) and core refuses a `kmt_` token that arrives without one — optional on the
+  wire, mandatory in effect, so an older image in a rolling deploy loses MCP rather than keeping the
+  hole open. `collab` refuses them outright: a CRDT socket is not a module API call and is in no
+  tool catalogue, so there is no need it could state. Whenever a rule is enforced from a request
+  object, ask which processes have that object — and check the reverse proxy, because a service you
+  think of as internal may be one hostname away.
+- **A cache keyed on less than the question makes a new check decorative.** Both `chat` and `mail`
+  cached the principal under the token alone. Adding the scope check without touching that key would
+  have let the first `GET` answer every later `POST` from its entry: core asked once, about a read,
+  and the write waved through on the cached answer — the fix passing its own tests and holding
+  nothing. Any time a lookup gains an input, the cache key gains it in the same edit; the test that
+  catches this asserts *two* calls reached the dependency, not that the second answer was right.
 - Ports: shell 5173 · core 4000 · chat 4100 · mail 4200 · collab 4300 · docs 4400. The live
   allocation, the next free number, and the map of every repository are generated —
   `node .claude/skills/kern-repos/scripts/sync.mjs`, then read the `kern-repos` skill.
