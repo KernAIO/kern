@@ -111,7 +111,11 @@ if ! ssh -f -N -M -S "$CONTROL_SOCKET" \
       -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
       -L "127.0.0.1:$LOCAL_PORT:127.0.0.1:$port" \
       "$SSH_USER@$SSH_HOST"; then
-  die "Could not open the port forward to $SSH_USER@$SSH_HOST for Coolify on port $port. The rollout will not send a Coolify API token over plain HTTP instead."
+  # Name the likely cause. `ExitOnForwardFailure` fires for a refused *forward*, not for an absent
+  # Coolify, and the two live on different machines — so a message mentioning Coolify sends whoever
+  # reads it at three in the morning to debug the wrong thing entirely. The usual cause is sshd:
+  # `AllowTcpForwarding no` is a common hardening default, and this rollout depends on it being on.
+  die "Could not open the port forward to $SSH_USER@$SSH_HOST. This is the SSH connection failing, not Coolify — Coolify has not been contacted yet. Check, in this order: 'sshd -T | grep allowtcpforwarding' on $SSH_HOST (it must be 'yes'; a hardening pass that sets it to 'no' breaks every rollout), then that the deploy key still authenticates, then that the host is reachable. The rollout will not fall back to sending a Coolify API token over plain HTTP."
 fi
 
 endpoint="http://127.0.0.1:$LOCAL_PORT"
