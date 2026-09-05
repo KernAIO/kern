@@ -6,7 +6,7 @@
 
 # The KernAIO repositories
 
-19 repositories, last synced 2026-08-26.
+20 repositories, last synced 2026-09-05.
 
 | Repository | Visibility | What it holds | Checked out at | Port |
 |---|---|---|---|---|
@@ -23,6 +23,7 @@
 | [`module-hr`](https://github.com/KernAIO/module-hr) | public | People, leave, attendance and approvals for Kern — a first-party module, written the way yours would be | `app/repos/module-hr` | — |
 | [`module-inventory`](https://github.com/KernAIO/module-inventory) | public | Kern inventory module — the company's asset register: what it owns, who holds each item, purchase and warranty details, and a full history of every change | `app/repos/module-inventory` | — |
 | [`module-mail`](https://github.com/KernAIO/module-mail) | public | Workspace email delivery for Kern — a first-party module, written the way yours would be | `app/repos/module-mail` | — |
+| [`module-meet`](https://github.com/KernAIO/module-meet) | public | Kern meetings module — the package skeleton; no features are built yet | `app/repos/module-meet` | — |
 | [`module-quire`](https://github.com/KernAIO/module-quire) | public | Spaces, pages and collaborative documents for Kern — a first-party module, written the way yours would be | `app/repos/module-quire` | — |
 | [`module-template`](https://github.com/KernAIO/module-template) | public | Apache-2.0 starting point for a Kern module — a whole working module: contract, server, schema, RLS, screens and strings | `app/repos/module-template` | — |
 | [`module-tracker`](https://github.com/KernAIO/module-tracker) | public | Projects, work items, cycles and workflows for Kern — a first-party module, written the way yours would be | `app/repos/module-tracker` | — |

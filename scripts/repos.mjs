@@ -37,6 +37,7 @@ export const ORDER = [
   'module-mail',
   'module-billing',
   'module-inventory',
+  'module-meet',
   'module-template',
   'core',
   'chat',
