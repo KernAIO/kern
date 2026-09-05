@@ -260,6 +260,38 @@ The repositories are **public**, so every commit is visible the moment it is pus
   CI resolved 0.2.x while every local build used 0.5.0. When you widen a contract, grep for the
   places that *construct* the type, and bump the consumer's range in the same change — green CI on
   a stale range is not evidence.
+- **Below 1.0.0, an additive field in `@kernhq/contracts` is free as a patch and costs twelve
+  repositories as a minor.** Adding `archivedAt` to `WorkspaceSummary` is as additive as a change
+  gets, and "new field → minor" is the semver reflex, so the changeset said minor and contracts
+  published 0.8.0. A caret on 0.x does not cross a minor, so that one word invalidated **every**
+  module's `contracts` peer range at once — `check-ranges` failed core's lint naming five of them —
+  and the honest repair is to republish all seven modules against `^0.8.0` and then bump the range
+  in all five services, because the rule is that the module moves and the host never moves down.
+  As **0.7.1** the same field would have been reached by every existing `^0.7.0` peer and every
+  service range, and the fan-out would have been zero. Ask what a bump *costs the graph* before
+  picking it: a field nothing is required to construct is a patch here, and a minor is for a change
+  consumers actually have to be stopped on.
+- **A cache that is down must cost latency, never correctness.** `Authz.effective()` awaited the
+  cache directly, so an unreachable Valkey threw ioredis' `MaxRetriesPerRequestError` out through
+  `can()` and `core.workspaces.myPermissions` answered **500** — while `/api/health` stayed green,
+  because nothing there touches Valkey. Shell fills `session.permissions` from that one call, so
+  every permission-gated screen in the product rendered empty on an instance reporting itself
+  healthy, which is the worst possible pairing for whoever is diagnosing it. Every cache call now
+  goes through one guard: a failed read is a miss and the answer is computed, a failed write is a
+  no-op, a failed invalidation is survivable because a cache nobody can reach serves nothing stale
+  either. It deliberately does not narrow to connection errors — any throw from a cache is a cache
+  that is not working, and a permission check is the last place to be clever about which. Test this
+  class by **stopping the container**, not by stubbing a throw: the real client's error arrives from
+  a different place than a hand-written one, and running it is what proves the stub was honest.
+- **A row that is right and a list that hides it is a feature nobody can reach.**
+  `scheduleWorkspaceDeletion` archives the workspace immediately, and `workspaceSummaries` filtered
+  archived rows out — so the workspace vanished from `users.me()` the instant Delete was pressed,
+  shell could no longer resolve the slug, and a sole-workspace owner returning a minute later was
+  shown "Create your first workspace". The cancel route worked the whole time and the 30-day undo
+  the terms promise was unreachable from inside the product. The existing test asserted on
+  `workspaces.archivedAt` in the database and passed throughout. **Assert on what the session is
+  told, not on what the table holds** — the two answer different questions, and only one of them is
+  what the customer experiences.
 - **A capability, a permission key and an entitlement key are all lies until something enforces
   them.** `kernel.entitlements` declares what a plan may limit — seats, storage, modules, SSO, audit
   retention, API rate — and each key has exactly one place in core that checks it. Plan *values* are
