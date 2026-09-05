@@ -434,6 +434,24 @@ comments and commit messages keep the voice they have; user-facing strings belon
 - `pnpm typecheck && pnpm lint && pnpm test && pnpm build` must pass before pushing.
 - UI follows `shell/DESIGN.md` (Ink/paper design system) and must work in RTL (fa/ar) and dark mode.
 - All user-facing strings go through i18n (Paraglide) — no hardcoded English in components.
+- **A mock that models a state transition must model its side effects, or the sweep certifies a
+  screen nobody can reach.** Scheduling a workspace deletion archives the workspace *immediately*,
+  which drops it from `users.me()`, which makes the shell unable to resolve the slug — so the owner
+  landed on "Create your first workspace" seconds after asking for a deletion the terms promise is
+  undoable for thirty days. The undo route worked perfectly when called directly; nothing in the
+  product could reach it. The mock did not archive on schedule, so the panel rendered beautifully
+  and `ux.spec` swept a page that could not exist in production. The same evening produced two more
+  of this shape: a test asserting on the database that could never see what `users.me()` returned,
+  and a 2FA flow that walked correctly against fixture data. **Assert reachability — where a person
+  lands after pressing the button, and whether the thing survives a reload on another route — not
+  that a component renders when handed the right props.**
+- **A consumer's assertion about another repository's copy goes stale in *that* repository, where
+  no CI can see it.** `module-mail` changed "queued for" to "sent to" when the test send became
+  synchronous; shell's assertion still held the old wording, so shell's `main` went red from a
+  change made where nothing runs shell's tests. Same shape as the mock-manifest counts and the
+  reserved-slug list: the check and the thing it checks live in different repositories. When you
+  move a user-facing string that another repository asserts on, grep the workspace for it before
+  you publish.
 - **A screen that works is not finished; it has to be pleasant.** Kern is judged as a product, so
   the things that read as amateur are defects here, not polish: text nobody can read in dark mode,
   a blank browser tab, an icon button a screen reader calls "button", a control too small to hit, a
