@@ -295,6 +295,11 @@ jobs:
           TOKEN: ${{ secrets.COOLIFY_TOKEN }}
         run: |
           set -euo pipefail
+          # Half an hour of pulling, dumping and migrating separates this from the step that opened
+          # the tunnel, and a forward that died in between would fail every call below with a
+          # connection refused. The script reuses a live tunnel and rebuilds a dead one, so ask it
+          # again rather than trusting a value set that long ago.
+          COOLIFY_API="$(.github/scripts/coolify-endpoint.sh)"
           BODY=$(jq -nc --arg v "$VERSION" '{key:"KERN_VERSION", value:$v, is_preview:false}')
           # $COOLIFY_API, never $COOLIFY_URL: the first is where this job may safely send the token,
           # decided by .github/scripts/coolify-endpoint.sh; the second is only what was configured.
@@ -381,6 +386,9 @@ jobs:
           fi
           echo "::warning::rolling app.kernaio.com back to $PREV"
 
+          # This is the latest step in the run and the one that must not fail for a plumbing
+          # reason: it re-opens the tunnel if the one from the start of the job has gone.
+          COOLIFY_API="$(.github/scripts/coolify-endpoint.sh)"
           BODY=$(jq -nc --arg v "$PREV" '{key:"KERN_VERSION", value:$v, is_preview:false}')
           curl -fsS -X POST "$COOLIFY_API/api/v1/applications/$APP_UUID/envs" \
             -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$BODY" \
