@@ -61,6 +61,9 @@ jobs:
       SNAPSHOT_DIR: ${{ vars.KERN_CLOUD_SNAPSHOT_DIR || '/var/backups/kern' }}
       PG_CONTAINER: ${{ vars.KERN_CLOUD_PG_CONTAINER }}
     steps:
+      # For .github/scripts/coolify-endpoint.sh. Nothing else here reads the repository.
+      - uses: actions/checkout@v4
+
       - name: Refuse anything that is not a pinned version
         run: |
           set -euo pipefail
@@ -147,6 +150,19 @@ jobs:
           EOS
           chmod +x "$RUNNER_TEMP/remote"
           echo 'echo "connected to $(hostname) as $(whoami); docker $(docker version --format "{{.Server.Version}}")"' | "$RUNNER_TEMP/remote"
+
+      # COOLIFY_TOKEN can read and change every application on that host, and until 2026-09-05 this
+      # workflow sent it as a bearer header to http://<ip>:8000 — cleartext, to a bare address,
+      # across the public internet, on every nightly release. There is no HTTPS to move to: :8000
+      # speaks no TLS, the instance has no FQDN, and Traefik holds certificates for the five kernaio
+      # hostnames only. But the rollout is already connected to that exact host by SSH, so the API
+      # call becomes a local one down that connection, and the token never leaves the runner.
+      # Deciding this — and refusing rather than falling back to cleartext — is the script's job.
+      - name: Reach Coolify without putting its token on the wire
+        run: |
+          set -euo pipefail
+          api="$(.github/scripts/coolify-endpoint.sh)"
+          echo "COOLIFY_API=$api" >> "$GITHUB_ENV"
 
       - name: Record what is live now, in case this needs to roll back
         id: before
@@ -280,13 +296,15 @@ jobs:
         run: |
           set -euo pipefail
           BODY=$(jq -nc --arg v "$VERSION" '{key:"KERN_VERSION", value:$v, is_preview:false}')
+          # $COOLIFY_API, never $COOLIFY_URL: the first is where this job may safely send the token,
+          # decided by .github/scripts/coolify-endpoint.sh; the second is only what was configured.
           # POST creates it the first time and 4xx's afterwards; PATCH updates an existing one.
-          curl -fsS -X POST "$COOLIFY_URL/api/v1/applications/$APP_UUID/envs" \
+          curl -fsS -X POST "$COOLIFY_API/api/v1/applications/$APP_UUID/envs" \
             -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$BODY" \
-          || curl -fsS -X PATCH "$COOLIFY_URL/api/v1/applications/$APP_UUID/envs" \
+          || curl -fsS -X PATCH "$COOLIFY_API/api/v1/applications/$APP_UUID/envs" \
             -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$BODY"
           echo
-          curl -fsS -X POST "$COOLIFY_URL/api/v1/deploy" \
+          curl -fsS -X POST "$COOLIFY_API/api/v1/deploy" \
             -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
             -d "$(jq -nc --arg u "$APP_UUID" '{uuid:$u, force:true}')"
           echo
@@ -364,12 +382,12 @@ jobs:
           echo "::warning::rolling app.kernaio.com back to $PREV"
 
           BODY=$(jq -nc --arg v "$PREV" '{key:"KERN_VERSION", value:$v, is_preview:false}')
-          curl -fsS -X POST "$COOLIFY_URL/api/v1/applications/$APP_UUID/envs" \
+          curl -fsS -X POST "$COOLIFY_API/api/v1/applications/$APP_UUID/envs" \
             -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$BODY" \
-          || curl -fsS -X PATCH "$COOLIFY_URL/api/v1/applications/$APP_UUID/envs" \
+          || curl -fsS -X PATCH "$COOLIFY_API/api/v1/applications/$APP_UUID/envs" \
             -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$BODY"
           echo
-          curl -fsS -X POST "$COOLIFY_URL/api/v1/deploy" \
+          curl -fsS -X POST "$COOLIFY_API/api/v1/deploy" \
             -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
             -d "$(jq -nc --arg u "$APP_UUID" '{uuid:$u, force:true}')"
           echo
@@ -411,6 +429,11 @@ jobs:
       - name: Leave nothing behind on the host
         if: always()
         run: |
+          # Close the Coolify port forward first: it holds the key open, and the runner is thrown
+          # away either way, but a forward left running is a listening socket nobody meant to leave.
+          if [ -S "$RUNNER_TEMP/coolify-tunnel.sock" ]; then
+            ssh -S "$RUNNER_TEMP/coolify-tunnel.sock" -O exit "$SSH_USER@$SSH_HOST" 2>/dev/null || true
+          fi
           [ -x "$RUNNER_TEMP/remote" ] || exit 0
           echo 'rm -f /tmp/kern-rollout-lib.sh' | "$RUNNER_TEMP/remote" || true
           rm -f ~/.ssh/rollout_key
