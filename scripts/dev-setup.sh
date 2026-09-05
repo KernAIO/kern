@@ -3,7 +3,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ORG="${KERN_ORG:-KernAIO}"
-REPOS=(app core chat mail collab kernel module-tracker module-chat module-quire module-hr module-mail module-billing module-inventory module-template docs)
+
+# The list lives in scripts/repos.mjs and nowhere else. It was written out here and in run-all.sh
+# and the two drifted: this copy cloned `app` — the umbrella, into itself — and neither had `shell`,
+# so a fresh workspace came up with no user interface.
+REPOS=()
+while IFS= read -r r; do
+  [ -n "$r" ] && REPOS+=("$r")
+done < <(node scripts/repos.mjs)
+if [ ${#REPOS[@]} -eq 0 ]; then
+  echo "scripts/repos.mjs listed no repositories — cannot set up the workspace" >&2
+  exit 1
+fi
+
 mkdir -p repos
 for r in "${REPOS[@]}"; do
   if [ -d "repos/$r/.git" ]; then
