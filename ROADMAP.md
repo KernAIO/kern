@@ -68,7 +68,8 @@ Never started, or a schema with no screens. Each is documented on the docs site 
 on the website as *planned*; nothing sells them.
 
 **Drive** · **Calendar** · **Recruiting** · **CRM** · **Automation** rules engine · **Calls**
-(the LiveKit profile exists in Compose; no module uses it) · **AI assistant** · **Personal mail
+(not in v1.0; being built now for v1.1 on 2026-09-23 — see below. `module-meet` exists and is
+empty, and no module reads the LiveKit profile yet) · **AI assistant** · **Personal mail
 inbox** (IMAP) · **Email-to-issue** (intake addresses) · **SSO** (OIDC/SAML — the entitlement is
 gated, but registering a provider answers 500 and has no screen; [core#1](https://github.com/KernAIO/core/issues/1),
 found 2026-09-04) · **Outgoing webhooks** · cross-workspace shared channels ·
@@ -174,11 +175,33 @@ security headers checked from outside; `ux.spec.ts` green on every route; a last
 open audit findings. Then **v1.0.0** is cut by hand — the only version the nightly will not pick
 on its own — with `schemaChanges` and `minPreviousVersion` set deliberately.
 
-## After v1.0
+## v1.1 — Meetings, 2026-09-23
+
+**Decided 2026-09-06, and building now.** `KernAIO/module-meet` exists and is deliberately empty of
+features; the LiveKit config it will use ships corrected in v1.0 and claims nothing.
+
+Four architects designed this independently and all four estimated nine to twelve focused days
+against eleven calendar days that already carried the rest of v1.0. The alternative was a cut-down
+version without persistent rooms, which is the half a customer least recognises. One week buys the
+whole feature instead.
+
+What v1.1 contains: call a colleague and their Kern rings wherever they are; camera and microphone
+with a preview first; several people at once; screen sharing; a huddle started from a chat
+conversation, with a message in the channel and a summary when it ends; named rooms a team walks
+into; chat inside the meeting; and the call surviving navigation, so opening an issue does not hang
+it up. Deferred deliberately: recording, dial-in, live captions, breakout rooms, and a guest door
+for people with no account.
+
+**Nothing says meetings exist until [item 13] passes** — two people, two machines, two networks,
+seeing and hearing each other. Not when the code looks finished. Until then this file, the docs, the
+website and `.env.example` all keep saying calls are not built. The plan's own rule is that the
+acceptance test may never be cut; it is what separates a module from a claim.
+
+## After v1.1
 
 The modules above under *Not in v1.0*, in roughly the order a paying team asks for them:
 Recruiting and CRM (both start from the workflow engine the tracker already uses), Automation,
-Calendar, Drive, Calls, AI. Each ships as its own repository through the same nightly.
+Calendar, Drive, AI. Each ships as its own repository through the same nightly.
 
 ## How this file is kept true
 
