@@ -595,9 +595,14 @@ pnpm dev       # every service with hot reload
   shipped. `REQUIRED_ROUTES` in that script is the half that does not depend on the three agreeing:
   a run of directives that must appear, in order, above `handle {`, in the host Caddyfile and both
   inline copies. Add an entry whenever a service starts answering on a path outside an existing
-  prefix. Prove a routing change by running the real Caddyfile in a `caddy` container against stub
-  upstreams and curling each path to see which upstream answers — `caddy validate` only says the
-  file parses, and the drift check only says the three match.
+  prefix. A `uri`/`rewrite` line belongs *inside* the entry, not beside it: a copy that keeps the
+  `reverse_proxy` and loses the `uri strip_prefix` reaches the right container and asks it for the
+  wrong path, which is a route that resolves, connects and 404s. Both directives are in the script's
+  extraction list for that reason, and dropping the strip_prefix from one copy was measured failing
+  the check on 2026-09-06. Prove a routing change by running the real Caddyfile in a `caddy`
+  container against stub upstreams and curling each path to see which upstream answers — `caddy
+  validate` only says the file parses (and until 2026-09-06 CI ran it on the two inline copies and
+  never on `selfhost/Caddyfile`, the one that ships), and the drift check only says the three match.
 - **An upgrade brings the stack files forward now, and until 2026-09-05 it never did.** `install.sh`
   fetches a distribution file only when it is absent (`[ -f "$f" ] || curl`) and `kern-upgrade.sh`
   only changed `KERN_VERSION` and pulled images, so an existing instance kept the
@@ -633,6 +638,14 @@ pnpm dev       # every service with hot reload
   The `port_range_start`/`port_range_end` pair it shipped with published **202** container ports,
   measured with `docker inspect .NetworkSettings.Ports`, and `room.auto_create: false` is what stops
   a leaked join token conjuring a room Kern has no record of.
+  **It exits 0 doing it.** On 2026-09-06 `webhook.api_kee` produced `could not parse config: … field
+  api_kee not found in type webhook.WebHookConfig` and `docker inspect` reported
+  `Status=exited ExitCode=0` — so a rejected config looks to Compose, to a `restart:` policy and to
+  Coolify's deploy gate exactly like a clean shutdown. Read the container's *logs* after changing
+  this file; its exit code will not tell you. The same run showed LiveKit takes its whole
+  configuration from a `LIVEKIT_CONFIG` environment variable when there is no file to mount, which is
+  what the Coolify copy uses — and that the config body is genuinely decoded, because that is where
+  the unknown-key error came from.
 - **A blank `.env` value is not an absent one, and only one of them can be repaired by adding.**
   The backfills in `install.sh` and `kern-upgrade.sh` handle a key that is *missing* by generating
   it. The opposite case needs the opposite fix: `KERN_SIGNUP=` defeats the compose pass-through and

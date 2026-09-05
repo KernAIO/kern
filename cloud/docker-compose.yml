@@ -103,6 +103,15 @@ services:
           handle /collab* {
             reverse_proxy collab:4300
           }
+          # LiveKit signalling. Nothing in Kern uses it — calls are not built. LiveKit serves it at
+          # /rtc, so the prefix is stripped: /livekit/rtc reaches LiveKit as /rtc. Only those two
+          # paths; the twirp admin API is deliberately not routed from the edge. This file has no
+          # livekit service, so the route answers 502.
+          @livekit path /livekit/rtc /livekit/rtc/*
+          handle @livekit {
+            uri strip_prefix /livekit
+            reverse_proxy livekit:7880
+          }
           # MCP, and the OAuth discovery documents an MCP client fetches before it connects. core
           # serves these at the ROOT of its Fastify app — the paths are fixed by the MCP and
           # RFC 8414/9728 specifications — so `handle /api/*` never saw them and they fell through

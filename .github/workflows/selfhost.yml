@@ -100,6 +100,19 @@ jobs:
       - name: The Coolify stack is the same stack
         run: python3 scripts/check-selfhost-drift.py
 
+      - name: selfhost/Caddyfile is valid
+        # The two inline copies were adapted below and this one was not, so the file that actually
+        # ships to every self-hoster was the only Caddy config in the repository nothing parsed.
+        # `docker compose config` does not read it — it is a mounted volume, a string to Compose.
+        # The placeholders are what the site block is built from, so they need values to adapt at
+        # all; any value will do, because this checks the syntax and not the domain.
+        run: |
+          set -euo pipefail
+          docker run --rm -e KERN_DOMAIN=selfhost.example.com -e ACME_EMAIL=ci@example.com \
+            -v "$PWD/selfhost/Caddyfile":/etc/caddy/Caddyfile:ro caddy:2-alpine \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          echo "✔ selfhost/Caddyfile"
+
       - name: The Caddy configs the Coolify and cloud stacks write are valid
         # Each is a heredoc inside a container command rather than a file, so nothing else would
         # ever read it. Adapting it in the real image is the only way to find out that it is wrong.

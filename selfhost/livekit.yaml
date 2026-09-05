@@ -33,3 +33,18 @@ room:
   # default — any holder of a join token conjures the room named in it, and a room Kern has no
   # record of has no membership, no history, and nobody who can end it.
   auto_create: false
+
+webhook:
+  # Where LiveKit reports who joined, who left and when a room ended. Nothing answers this path
+  # today — calls are not built — and nothing sends to it either unless an operator has passed
+  # `--profile calls` and something has created a room.
+  #
+  # `kern` is the identifier half of the LIVEKIT_KEYS pair this container is started with, and it
+  # can be named here only because it is a fixed literal: Compose interpolates into a compose file
+  # and never into a file it mounts, so `${LIVEKIT_API_KEY}` would arrive at LiveKit as those
+  # characters. The secret half is not here and cannot be; LiveKit signs each delivery with the
+  # secret it already holds for this key, and the receiver checks that signature.
+  api_key: kern
+  # core, on the Compose network. This address is not reachable from outside it.
+  urls:
+    - http://core:4000/api/meet/webhooks/livekit

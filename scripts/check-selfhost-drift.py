@@ -68,6 +68,17 @@ REQUIRED_ROUTES = {
         "handle @mcp {",
         "reverse_proxy core:4000",
     ],
+    # The signalling WebSocket a browser opens before a call. LiveKit serves it at /rtc, so the
+    # strip_prefix is part of the route rather than decoration: without it LiveKit is asked for
+    # /livekit/rtc and the call never negotiates. That is why `uri` is in the directive list below.
+    # livekit:7880 is not published by any of the three compose files, so this route is the only way
+    # to reach it — and only these two paths, never /twirp/*.
+    "LiveKit signalling reaches the media server": [
+        "@livekit path /livekit/rtc /livekit/rtc/*",
+        "handle @livekit {",
+        "uri strip_prefix /livekit",
+        "reverse_proxy livekit:7880",
+    ],
 }
 
 
@@ -136,9 +147,11 @@ def kern_images(doc):
 
 
 def routes(caddyfile):
-    """The directives that decide where a request goes. Formatting and comments are free to differ;
-    the order matters, because Caddy's first matching handler wins."""
-    directive = re.compile(r"^\s*(reverse_proxy|handle|handle_path|@\w+ path|rewrite)\b")
+    """The directives that decide where a request goes, and what path the upstream is asked for.
+    Formatting and comments are free to differ; the order matters, because Caddy's first matching
+    handler wins. `uri` and `rewrite` are in the list because a route that reaches the right
+    container with the wrong path is as broken as one that reaches nothing."""
+    directive = re.compile(r"^\s*(reverse_proxy|handle|handle_path|@\w+ path|rewrite|uri)\b")
     return [re.sub(r"\s+", " ", line).strip() for line in caddyfile.splitlines() if directive.match(line)]
 
 

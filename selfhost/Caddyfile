@@ -19,6 +19,25 @@
 	handle /collab* {
 		reverse_proxy collab:4300
 	}
+	# LiveKit signalling. Nothing in Kern uses it — calls are not built, and .env.example says so.
+	#
+	# LiveKit serves its signalling WebSocket at /rtc, so the prefix is stripped: a request for
+	# /livekit/rtc reaches LiveKit as /rtc, and /livekit/rtc/validate as /rtc/validate. Media does
+	# not pass through Caddy at all; it goes to 7882/udp, or 7881/tcp where a network blocks UDP.
+	#
+	# Namespaced under /livekit rather than taking /rtc at the root, and only those two paths.
+	# LiveKit's twirp admin API creates rooms and removes participants, so it is deliberately not
+	# routed from the edge: /livekit/twirp/... falls through to the app below. livekit:7880 is not
+	# published by docker-compose.yml either, so this route is the only way in from outside.
+	#
+	# The livekit service is behind `--profile calls`, which a default install does not pass. With no
+	# such container this route answers 502 and every other route is unchanged — measured on
+	# 2026-09-06 by running this file in a caddy container against stub upstreams.
+	@livekit path /livekit/rtc /livekit/rtc/*
+	handle @livekit {
+		uri strip_prefix /livekit
+		reverse_proxy livekit:7880
+	}
 	# object storage (presigned URLs)
 	#
 	# NO path stripping, and the route is the bucket name rather than a prefix of our own. A

@@ -117,6 +117,15 @@ services:
           handle /collab* {
             reverse_proxy collab:4300
           }
+          # LiveKit signalling. Nothing in Kern uses it — calls are not built. LiveKit serves it at
+          # /rtc, so the prefix is stripped: /livekit/rtc reaches LiveKit as /rtc. Only those two
+          # paths; the twirp admin API is deliberately not routed from the edge. The livekit service
+          # below is commented out, so this answers 502 until somebody uncomments it.
+          @livekit path /livekit/rtc /livekit/rtc/*
+          handle @livekit {
+            uri strip_prefix /livekit
+            reverse_proxy livekit:7880
+          }
           # object storage (presigned URLs) — routed by bucket name, with NO stripping, because
           # SigV4 signs the path MinIO must receive. Coolify assigns one domain, so there is no
           # second hostname to give MinIO here; /kern is safe because it is reserved in core.
@@ -400,6 +409,47 @@ services:
     depends_on: [minio]
     entrypoint: >
       /bin/sh -c "sleep 3; mc alias set local http://minio:9000 kern ${SERVICE_PASSWORD_MINIO} && mc mb -p local/kern || true"
+
+  # LiveKit, for calls. Commented out, and it stays that way until you want calls: Coolify has no
+  # way to pass `--profile calls`, so anything present here runs on every deploy, and an idle
+  # container nobody asked for is a container an operator has to explain to themselves.
+  #
+  # To turn calls on: uncomment this service, uncomment the two ports, open 7881/tcp and 7882/udp on
+  # the host's firewall, and set LIVEKIT_URL=ws://livekit:7880 and LIVEKIT_API_KEY=kern in Coolify's
+  # Environment Variables tab. Media does not pass through Coolify's proxy or through Caddy — it
+  # goes to those two ports directly — so the server's public address has to be reachable. Signalling
+  # does go through Caddy, on the /livekit/rtc route above.
+  #
+  # The configuration is an environment variable rather than the mounted /etc/livekit.yaml the host
+  # install uses, because a Compose file pasted into Coolify has no files beside it to mount. It
+  # therefore contains no `$` at all: Compose interpolates a value before the container sees it, so a
+  # `${...}` here would be substituted, and a bare `$` would be an interpolation error. That is why
+  # the API key is the literal `kern` — the same reason the mounted file names it.
+  #
+  # Keep this in step with ../livekit.yaml; the two describe the same server.
+  #
+  # livekit:
+  #   image: livekit/livekit-server:v1.13.6
+  #   restart: unless-stopped
+  #   environment:
+  #     LIVEKIT_KEYS: "kern: ${SERVICE_PASSWORD_LIVEKIT}"
+  #     LIVEKIT_CONFIG: |
+  #       port: 7880
+  #       rtc:
+  #         tcp_port: 7881
+  #         udp_port: 7882
+  #         use_external_ip: true
+  #       turn:
+  #         enabled: false
+  #       room:
+  #         auto_create: false
+  #       webhook:
+  #         api_key: kern
+  #         urls:
+  #           - http://core:4000/api/meet/webhooks/livekit
+  #   # The only ports this stack publishes. Everything else reaches Coolify's proxy over the Docker
+  #   # network; media cannot, because it is not HTTP.
+  #   ports: ["7881:7881", "7882:7882/udp"]
 
   # Office and PDF previews. Opt-in on a host install (--profile preview) and always on here, because
   # Coolify has no way to pass a profile. Nothing calls it yet — previews are not built — so today it
