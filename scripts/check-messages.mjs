@@ -2,6 +2,11 @@
  * Fail when a `t()` key is not defined anywhere.
  *
  *   node scripts/check-messages.mjs [moduleDir ...]     (default: the current package)
+ *   node scripts/check-messages.mjs --all-modules       every module repository in the workspace
+ *
+ * `--all-modules` reads scripts/repos.mjs rather than a list typed into package.json, which is
+ * where the eight module directories used to be written out by hand — a ninth would have been
+ * checked by nothing.
  *
  * `t()` returns the **key** when nothing defines it. That is deliberate — a missing string that
  * renders as `chat.nav` is visibly broken, where an empty one is a blank space nobody reports — but
@@ -14,12 +19,27 @@
  * A key resolves if it is in this module's own bundle (`src/client/i18n.ts`) or, when written
  * `common.x`, in the framework's shared bundle.
  */
-import { readFileSync, existsSync, readdirSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { MODULES } from './repos.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const dirs = process.argv.slice(2)
+let dirs = process.argv.slice(2)
+
+if (dirs.includes('--all-modules')) {
+  const wanted = MODULES.map((name) => join(here, '..', 'repos', name))
+  const absent = wanted.filter((dir) => !existsSync(join(dir, 'package.json')))
+  if (absent.length > 0) {
+    // Never silently: a check that covers less than it claims to is the whole reason this file and
+    // scripts/repos.mjs exist.
+    console.error(
+      `not checked out, so not checked: ${absent.map((d) => d.split('/').pop()).join(', ')} — run pnpm setup`,
+    )
+  }
+  dirs = wanted.filter((dir) => !absent.includes(dir))
+}
+
 if (dirs.length === 0) dirs.push(process.cwd())
 
 /** Keys the framework's `common` bundle defines. Quote style varies with the formatter. */
@@ -53,9 +73,7 @@ for (const dir of dirs) {
   if (bundles.length === 0) continue
 
   const bundle = bundles.map((p) => readFileSync(p, 'utf8')).join('\n')
-  const own = new Set(
-    [...bundle.matchAll(new RegExp(`['"]${id}\\.([a-z0-9_]+)['"]`, 'g'))].map((m) => m[1]),
-  )
+  const own = new Set([...bundle.matchAll(new RegExp(`['"]${id}\\.([a-z0-9_]+)['"]`, 'g'))].map((m) => m[1]))
 
   const files = []
   const walk = (d) => {
